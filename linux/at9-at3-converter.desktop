@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=AT9 & AT3 Converter
+GenericName=ATRAC Audio Converter
+Comment=Convert WAV/MP3 to Sony AT9/AT3 (PS4, PSVita, PS3, PSP) and back
+Exec=at9-at3-converter %f
+Icon=at9-at3-converter
+Terminal=false
+Categories=AudioVideo;Audio;Utility;
+MimeType=audio/x-wav;audio/wav;audio/mpeg;
+Keywords=atrac;at9;at3;playstation;ps4;psvita;psp;ps3;theme;
+StartupWMClass=at9-at3-converter

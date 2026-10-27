@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Launcher for BMK AT9 & AT3 Converter (Linux).
+# Works from a git checkout (./linux/at9-at3-converter) or an install.sh install.
+set -e
+here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+export PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}"
+exec "${PYTHON:-python3}" -m at9at3conv "$@"

@@ -30,3 +30,11 @@ TestResults/
 # OS files
 Thumbs.db
 Desktop.ini
+
+# Linux port
+__pycache__/
+*.pyc
+linux/src/
+linux/pkg/
+linux/at9-at3-converter-src/
+*.pkg.tar.*

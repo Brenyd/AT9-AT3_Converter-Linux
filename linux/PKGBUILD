@@ -1,0 +1,32 @@
+# Maintainer: Brenyd
+# Build & install:  cd linux && makepkg -si
+pkgname=at9-at3-converter-git
+_name=at9-at3-converter
+_src=at9-at3-converter-src  # differs from the launcher script in this folder
+pkgver=2.7.r0
+pkgrel=1
+pkgdesc="Convert WAV/MP3 to Sony ATRAC AT9/AT3 (PS4, PSVita, PS3, PSP) and back - Linux port of BMK AT9 & AT3 Converter"
+arch=('x86_64')
+url="https://github.com/Brenyd/AT9-AT3_Converter-Linux"
+license=('custom')
+depends=('python' 'pyside6' 'wine' 'ffmpeg')
+optdepends=('lame: native MP3 encoding (ffmpeg is used otherwise)'
+            'pipewire-audio: playback via pw-play'
+            'libpulse: playback via paplay'
+            'alsa-utils: playback via aplay')
+makedepends=('git')
+provides=("$_name")
+conflicts=("$_name")
+options=('!strip')  # ships Windows .exe/.dll files run through Wine
+source=("$_src::git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+    cd "$_src"
+    printf "2.7.r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+package() {
+    cd "$_src"
+    PREFIX=/usr DESTDIR="$pkgdir" ./linux/install.sh
+}

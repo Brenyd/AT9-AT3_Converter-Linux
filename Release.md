@@ -1,5 +1,22 @@
 # ChangeLog
 
+**Linux port (based on V2.7)**
+
+    ### Added
+    - Native Linux app in `linux/` (Qt / PySide6), same UI and features as V2.7
+    - Sony at9tool/at3tool run through Wine in a private, auto-created prefix
+    - ffmpeg replaces NAudio (resampling, MP3 decoding); lame/ffmpeg replace lame.exe
+    - AT9/AT3 playback via PipeWire, PulseAudio, ALSA or ffplay (replaces MiniPlayer.exe)
+    - Command-line mode: `at9-at3-converter convert ...`
+    - Click the drop bar to browse for a file
+    - install.sh (user or system install, .desktop entry) and an Arch PKGBUILD
+
+    ### Improved
+    - Files can live anywhere, with spaces or non-ASCII characters in their names
+    - Input WAVs that are not 16-bit PCM are converted before encoding
+    - PSP MP3 input is forced to 44100 Hz stereo, like PSP WAV input
+    - Logs go to ~/.local/state/at9-at3-converter, with an "Open log" link on errors
+
 **V2.7**
 
     ### Added

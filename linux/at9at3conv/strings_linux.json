@@ -1,0 +1,53 @@
+{
+  "en": {
+    "wine_preparing": "Preparing Wine (first run, please wait)...",
+    "wine_missing": "Wine is needed to run Sony's ATRAC tools. Install it with your package manager (for example: sudo pacman -S wine).",
+    "ffmpeg_missing": "FFmpeg is needed for this conversion. Install it with your package manager (for example: sudo pacman -S ffmpeg).",
+    "mp3_encoder_missing": "LAME or FFmpeg is needed to create MP3 files (for example: sudo pacman -S lame).",
+    "tool_missing": "Sony tool not found:",
+    "no_audio_player": "No audio player found. Install pipewire, pulseaudio-utils, alsa-utils or ffmpeg.",
+    "open_file_title": "Choose an audio file",
+    "audio_files": "Audio files",
+    "browse": "Browse...",
+    "open_log": "Open log",
+    "tooltip_drag_drop_click": "Drag and drop your file here, or click to browse",
+    "bitrate_info_title": "Bitrate information",
+    "decoding_for_playback": "Preparing playback..."
+  },
+  "fr": {
+    "error": "Erreur",
+    "tool_options": "Options...",
+    "tooltip_tool_options": "Ouvrir les options de conversion pour la console et le mode sélectionnés",
+    "wine_preparing": "Préparation de Wine (premier lancement, patientez)...",
+    "wine_missing": "Wine est nécessaire pour lancer les outils ATRAC de Sony. Installez-le avec votre gestionnaire de paquets (par exemple : sudo pacman -S wine).",
+    "ffmpeg_missing": "FFmpeg est nécessaire pour cette conversion. Installez-le avec votre gestionnaire de paquets (par exemple : sudo pacman -S ffmpeg).",
+    "mp3_encoder_missing": "LAME ou FFmpeg est nécessaire pour créer des fichiers MP3 (par exemple : sudo pacman -S lame).",
+    "tool_missing": "Outil Sony introuvable :",
+    "no_audio_player": "Aucun lecteur audio trouvé. Installez pipewire, pulseaudio-utils, alsa-utils ou ffmpeg.",
+    "open_file_title": "Choisir un fichier audio",
+    "audio_files": "Fichiers audio",
+    "browse": "Parcourir...",
+    "open_log": "Ouvrir le journal",
+    "tooltip_drag_drop_click": "Glissez-déposez votre fichier ici, ou cliquez pour parcourir",
+    "bitrate_info_title": "Informations sur le bitrate",
+    "decoding_for_playback": "Préparation de la lecture..."
+  },
+  "es": {
+    "error": "Error",
+    "tool_options": "Opciones...",
+    "tooltip_tool_options": "Abrir las opciones de conversión para la consola y el modo seleccionados",
+    "wine_preparing": "Preparando Wine (primer inicio, espera)...",
+    "wine_missing": "Se necesita Wine para ejecutar las herramientas ATRAC de Sony. Instálalo con tu gestor de paquetes (por ejemplo: sudo pacman -S wine).",
+    "ffmpeg_missing": "Se necesita FFmpeg para esta conversión. Instálalo con tu gestor de paquetes (por ejemplo: sudo pacman -S ffmpeg).",
+    "mp3_encoder_missing": "Se necesita LAME o FFmpeg para crear archivos MP3 (por ejemplo: sudo pacman -S lame).",
+    "tool_missing": "No se encontró la herramienta de Sony:",
+    "no_audio_player": "No se encontró ningún reproductor de audio. Instala pipewire, pulseaudio-utils, alsa-utils o ffmpeg.",
+    "open_file_title": "Elegir un archivo de audio",
+    "audio_files": "Archivos de audio",
+    "browse": "Examinar...",
+    "open_log": "Abrir registro",
+    "tooltip_drag_drop_click": "Arrastra y suelta tu archivo aquí, o haz clic para examinar",
+    "bitrate_info_title": "Información de bitrate",
+    "decoding_for_playback": "Preparando la reproducción..."
+  }
+}
