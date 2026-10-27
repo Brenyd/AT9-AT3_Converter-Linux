@@ -8,6 +8,7 @@ replaced by ffmpeg, lame.exe by native lame, and the Sony tools run via Wine.
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 import json
 import os
 import shlex
@@ -63,9 +64,89 @@ def find_assets_dir() -> Path:
         Path("/usr/lib") / APP_ID / "assets",
     ]
     for candidate in candidates:
-        if (candidate / "ATRAC").is_dir():
+        if (candidate / "Resources").is_dir():
             return candidate
     return candidates[0]
+
+
+# --------------------------------------------------------------------------
+# User-supplied Sony tools (not distributed with the app)
+# --------------------------------------------------------------------------
+
+def tools_dir() -> Path:
+    """Where imported copies of the Sony tools live."""
+    override = os.environ.get("AT9AT3_TOOLS")
+    return Path(override).expanduser() if override else data_dir() / "tools"
+
+
+# SHA-256 of the builds the Windows app was made with (for "known build" info only;
+# other builds are still accepted if they identify correctly).
+KNOWN_TOOL_HASHES = {
+    "8228fbd4ea5552a1ea80ca8304c09104423d142313d6d80ea49d63c048c8d00b": "PS4",
+    "d57d5f24b3f733864d1ac24d5a9293269b7b0a113e28944dcd848a168bb69b63": "PSVita",
+    "823199113c59ffcd3fc3e1855dbb88a9cd44d29e82e7a7cfc42e8c92f2a61341": "PSP",
+    "8ac653df80443000c8532052a7005167031b546143295aa8c2ab89f3697af3bb": "PS3",
+}
+
+
+def identify_tool(path: Path) -> Optional[str]:
+    """Which console's tool a file is, by its contents (names don't matter)."""
+    try:
+        if path.stat().st_size > 64 * 1024 * 1024:
+            return None
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if not data.startswith(b"MZ"):
+        return None
+    known = KNOWN_TOOL_HASHES.get(hashlib.sha256(data).hexdigest())
+    if known:
+        return known
+    if b"ATRAC9 library" in data or b"at9tool" in data:
+        return "PS4" if b"Band Extension" in data else "PSVita"
+    if b"ATRAC3plus" in data or b"at3tool" in data:
+        return "PS3" if b"PS3at3tool" in data or b"48kHz PCM" in data else "PSP"
+    return None
+
+
+def _candidate_files(sources: list[Path]) -> list[Path]:
+    files: list[Path] = []
+    for src in sources:
+        src = Path(src).expanduser()
+        if src.is_dir():
+            files += [p for p in sorted(src.rglob("*")) if p.is_file()
+                      and p.suffix.lower() in (".exe", ".dll")]
+        elif src.is_file():
+            files.append(src)
+    return files
+
+
+def import_tools(sources: list[Path]) -> tuple[dict, list[Path]]:
+    """Copy the user's at9tool/at3tool files into tools_dir().
+
+    Returns ({console: installed_path}, [files that were not recognised]).
+    Microsoft runtime DLLs next to them (msvcr*.dll) are copied too, although
+    Wine's built-in versions work without them.
+    """
+    dest = tools_dir()
+    dest.mkdir(parents=True, exist_ok=True)
+    imported: dict = {}
+    skipped: list[Path] = []
+    for path in _candidate_files(sources):
+        if path.suffix.lower() == ".dll":
+            if path.name.lower().startswith("msvc"):
+                shutil.copyfile(path, dest / path.name.lower())
+            continue
+        console = identify_tool(path)
+        if console is None:
+            skipped.append(path)
+            continue
+        target = dest / TOOL_NAMES[console]
+        if path.resolve() != target.resolve():
+            shutil.copyfile(path, target)
+        os.chmod(target, 0o644)
+        imported[console] = target
+    return imported, skipped
 
 
 # --------------------------------------------------------------------------
@@ -489,7 +570,25 @@ class Toolchain:
     # -- wine --------------------------------------------------------------
 
     def tool_path(self, tool_name: str) -> Path:
-        return self.assets / "ATRAC" / tool_name
+        """Imported copy first; a Windows-style ATRAC/ folder still works too."""
+        for folder in (tools_dir(), self.assets / "ATRAC"):
+            candidate = folder / tool_name
+            if candidate.is_file():
+                return candidate
+        return tools_dir() / tool_name
+
+    def has_tool(self, console: str) -> bool:
+        return console in TOOL_NAMES and self.tool_path(TOOL_NAMES[console]).is_file()
+
+    def missing_tools(self) -> list[str]:
+        return [c for c in TOOL_NAMES if not self.has_tool(c)]
+
+    def needs_sony_tool(self, job: "ConversionJob") -> bool:
+        """Encoding always does; decoding only for Advanced/Expert options
+        (Basic decodes natively with ffmpeg)."""
+        if job.mode.is_encode:
+            return True
+        return job.settings.level != ToolOptionLevel.BASIC or not self.ffmpeg
 
     def wine_env(self) -> dict:
         env = dict(os.environ)
@@ -521,7 +620,10 @@ class Toolchain:
                       ctx: Optional[LogContext]) -> bool:
         exe = self.tool_path(tool_name)
         if not exe.is_file():
-            raise ConversionError("tool_missing", str(exe))
+            console = next((c for c, n in TOOL_NAMES.items() if n == tool_name), tool_name)
+            raise ConversionError("tool_missing", console)
+        if not self.wine:
+            raise ConversionError("wine_missing")
         cmd = [self.wine, to_windows_path(exe)] + args
         return self._run("ATRAC/" + tool_name, cmd, args, ctx, cwd=workdir,
                          env=self.wine_env())
@@ -629,6 +731,8 @@ class Converter:
     def _encode(self, job: ConversionJob, work: Path, status: StatusCallback) -> ConversionResult:
         if not job.bitrate:
             raise ConversionError("invalid_options", "no bitrate selected")
+        if not self.tools.has_tool(job.console):
+            raise ConversionError("tool_missing", job.console)
         self.tools.ensure_wine(status)
 
         rate = target_sample_rate(job.console)
@@ -696,17 +800,18 @@ class Converter:
         conversion = "%s -> %s" % (codec_label, "MP3 decode" if job.mode.to_mp3 else "WAV")
         ctx = self._ctx(job, conversion, job.input_file, wav, options)
 
-        if self.tools.wine:
-            self.tools.ensure_wine(status)
-            args = ["-d"] + options + [to_windows_path(staged_in), to_windows_path(staged_out)]
-            ok = self.tools.run_sony_tool(job.tool_name, args, work, ctx)
-        elif job.settings.level == ToolOptionLevel.BASIC and self.tools.ffmpeg:
-            # No Wine: ffmpeg decodes ATRAC3/3+/9 natively (no loop repeat,
-            # which matches the app's default of -repeat 1).
+        if not self.tools.needs_sony_tool(job):
+            # Native: ffmpeg decodes ATRAC3/3plus/9 itself. It plays the file
+            # once, which is what the app's Basic default (-repeat 1) does.
+            ctx.options = "ffmpeg (native)"
             ok = self.tools.run_ffmpeg(["-i", str(staged_in), "-c:a", "pcm_s16le",
                                         str(staged_out)], ctx)
         else:
-            raise ConversionError("wine_missing")
+            if not self.tools.has_tool(job.console):
+                raise ConversionError("tool_missing", job.console)
+            self.tools.ensure_wine(status)
+            args = ["-d"] + options + [to_windows_path(staged_in), to_windows_path(staged_out)]
+            ok = self.tools.run_sony_tool(job.tool_name, args, work, ctx)
         if not ok or not _nonempty(staged_out):
             raise ConversionError("conversion_log_error")
         _replace_file(staged_out, wav)
@@ -746,9 +851,8 @@ def decode_for_playback(path: Path, tools: Toolchain, workdir: Path) -> Path:
         tools.ensure_wine()
         staged = workdir / ("play." + kind)
         shutil.copyfile(path, staged)
-        tool = "PS4_at9tool.exe" if kind == "at9" else "PS3_at3tool.exe"
-        candidates = [tool, "PSVita_at9tool.exe"] if kind == "at9" else [tool, "PSP_at3tool.exe"]
-        for name in candidates:
+        consoles = ["PS4", "PSVita"] if kind == "at9" else ["PS3", "PSP"]
+        for name in [TOOL_NAMES[c] for c in consoles if tools.has_tool(c)]:
             args = ["-d", "-repeat", "1", to_windows_path(staged), to_windows_path(out)]
             if tools.run_sony_tool(name, args, workdir, None) and _nonempty(out):
                 return out

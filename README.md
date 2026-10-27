@@ -7,7 +7,8 @@ A native Linux version of BMK AT9 & AT3 Converter 2.7 lives in [`linux/`](linux)
 How it works:
 
 - The UI is Qt (PySide6), so it fits right in on KDE Plasma and other desktops.
-- Sony's `at9tool`/`at3tool` are closed-source Windows programs, so they run through **Wine**, in their own Wine prefix (`~/.local/share/at9-at3-converter/wineprefix`) that's set up automatically on first use.
+- **Sony's `at9tool`/`at3tool` are not included.** You import your own copies once (see below). They're recognised by their contents, so the file names don't matter. They're closed-source Windows programs, so they run through **Wine** in their own prefix (`~/.local/share/at9-at3-converter/wineprefix`), which is set up automatically on first use.
+- **Decoding (AT9/AT3 → WAV/MP3) and playback are fully native** with ffmpeg, and need neither the Sony tools nor Wine. Those are only used for encoding and for the Advanced/Expert decode options.
 - What NAudio, `lame.exe` and `MiniPlayer.exe` did on Windows is done natively: **ffmpeg** for resampling and MP3 decoding, **lame** (or ffmpeg) for MP3 encoding, and PipeWire / PulseAudio / ALSA for playback.
 - Files can be anywhere, with spaces or non-English characters in their names. They no longer have to sit next to the app.
 
@@ -17,12 +18,14 @@ How it works:
 sudo pacman -S --needed wine ffmpeg pyside6 lame
 git clone https://github.com/Brenyd/AT9-AT3_Converter-Linux.git
 cd AT9-AT3_Converter-Linux
-./linux/install.sh            # installs to ~/.local, adds a menu entry
+./linux/install.sh --tools ~/path/to/your/sony-tools   # installs to ~/.local, adds a menu entry
 ```
 
-Or build a package: `cd linux && makepkg -si`.
+`--tools` accepts a folder or individual files. You can also import later with `at9-at3-converter import-tools DIR`, or by clicking **Sony tools** in the app's status bar, which also shows which of the four tools (PS4, PSVita, PSP, PS3) you have. Imported copies live in `~/.local/share/at9-at3-converter/tools/`.
 
-On other distros, install Wine, ffmpeg, PySide6 and (optionally) lame with your package manager, then run `./linux/install.sh`. You can also run the app straight from the checkout with `./linux/at9-at3-converter`. To remove it, run `./linux/install.sh --uninstall`.
+Or build a package: `cd linux && makepkg -si`, then import your tools as above. Wine is an optional dependency, since it's only needed for encoding.
+
+On other distros, install ffmpeg, PySide6, Wine (for encoding) and (optionally) lame with your package manager, then run `./linux/install.sh`. You can also run the app straight from the checkout with `./linux/at9-at3-converter`. To remove it, run `./linux/install.sh --uninstall`.
 
 ### Use
 
@@ -37,7 +40,7 @@ at9-at3-converter convert bgm.at9 --to mp3                           # -> bgm.mp
 at9-at3-converter convert --help
 ```
 
-If AT9/AT3 → WAV decoding is set to Basic, it still works without Wine (ffmpeg decodes ATRAC natively). Encoding always needs Wine.
+`at9-at3-converter tools` lists which Sony tools, Wine, ffmpeg and lame were found.
 
 Logs (`conversion_commands.log`, `conversion_errors.log`) are written to `~/.local/state/at9-at3-converter/`. When a conversion fails, the status bar shows an **Open log** link.
 

@@ -4,7 +4,7 @@
     "wine_missing": "Wine is needed to run Sony's ATRAC tools. Install it with your package manager (for example: sudo pacman -S wine).",
     "ffmpeg_missing": "FFmpeg is needed for this conversion. Install it with your package manager (for example: sudo pacman -S ffmpeg).",
     "mp3_encoder_missing": "LAME or FFmpeg is needed to create MP3 files (for example: sudo pacman -S lame).",
-    "tool_missing": "Sony tool not found:",
+    "tool_missing": "Sony's encoding tool for this console isn't installed:",
     "no_audio_player": "No audio player found. Install pipewire, pulseaudio-utils, alsa-utils or ffmpeg.",
     "open_file_title": "Choose an audio file",
     "audio_files": "Audio files",
@@ -12,7 +12,15 @@
     "open_log": "Open log",
     "tooltip_drag_drop_click": "Drag and drop your file here, or click to browse",
     "bitrate_info_title": "Bitrate information",
-    "decoding_for_playback": "Preparing playback..."
+    "decoding_for_playback": "Preparing playback...",
+    "sony_tools": "Sony tools",
+    "tools_import_question": "The %s tool isn't installed.\n\nThis app doesn't include Sony's tools. Select your own copies of at9tool / at3tool to import them now?",
+    "tools_import_title": "Select your Sony at9tool / at3tool files",
+    "windows_programs": "Windows programs",
+    "tools_imported": "Imported: %s",
+    "tools_not_recognized": "Not recognised as at9tool/at3tool (skipped):",
+    "tools_status": "Installed: %s\nMissing: %s\n\nThe Sony tools are only needed for encoding and for Advanced/Expert decoding. Import more now?",
+    "none": "none"
   },
   "fr": {
     "error": "Erreur",
@@ -22,7 +30,7 @@
     "wine_missing": "Wine est nécessaire pour lancer les outils ATRAC de Sony. Installez-le avec votre gestionnaire de paquets (par exemple : sudo pacman -S wine).",
     "ffmpeg_missing": "FFmpeg est nécessaire pour cette conversion. Installez-le avec votre gestionnaire de paquets (par exemple : sudo pacman -S ffmpeg).",
     "mp3_encoder_missing": "LAME ou FFmpeg est nécessaire pour créer des fichiers MP3 (par exemple : sudo pacman -S lame).",
-    "tool_missing": "Outil Sony introuvable :",
+    "tool_missing": "L'outil d'encodage Sony pour cette console n'est pas installé :",
     "no_audio_player": "Aucun lecteur audio trouvé. Installez pipewire, pulseaudio-utils, alsa-utils ou ffmpeg.",
     "open_file_title": "Choisir un fichier audio",
     "audio_files": "Fichiers audio",
@@ -30,7 +38,15 @@
     "open_log": "Ouvrir le journal",
     "tooltip_drag_drop_click": "Glissez-déposez votre fichier ici, ou cliquez pour parcourir",
     "bitrate_info_title": "Informations sur le bitrate",
-    "decoding_for_playback": "Préparation de la lecture..."
+    "decoding_for_playback": "Préparation de la lecture...",
+    "sony_tools": "Outils Sony",
+    "tools_import_question": "L'outil %s n'est pas installé.\n\nCette application n'inclut pas les outils de Sony. Sélectionner vos propres copies de at9tool / at3tool pour les importer maintenant ?",
+    "tools_import_title": "Sélectionnez vos fichiers Sony at9tool / at3tool",
+    "windows_programs": "Programmes Windows",
+    "tools_imported": "Importé : %s",
+    "tools_not_recognized": "Non reconnus comme at9tool/at3tool (ignorés) :",
+    "tools_status": "Installés : %s\nManquants : %s\n\nLes outils Sony ne servent qu'à l'encodage et au décodage Avancé/Expert. En importer maintenant ?",
+    "none": "aucun"
   },
   "es": {
     "error": "Error",
@@ -40,7 +56,7 @@
     "wine_missing": "Se necesita Wine para ejecutar las herramientas ATRAC de Sony. Instálalo con tu gestor de paquetes (por ejemplo: sudo pacman -S wine).",
     "ffmpeg_missing": "Se necesita FFmpeg para esta conversión. Instálalo con tu gestor de paquetes (por ejemplo: sudo pacman -S ffmpeg).",
     "mp3_encoder_missing": "Se necesita LAME o FFmpeg para crear archivos MP3 (por ejemplo: sudo pacman -S lame).",
-    "tool_missing": "No se encontró la herramienta de Sony:",
+    "tool_missing": "La herramienta de codificación de Sony para esta consola no está instalada:",
     "no_audio_player": "No se encontró ningún reproductor de audio. Instala pipewire, pulseaudio-utils, alsa-utils o ffmpeg.",
     "open_file_title": "Elegir un archivo de audio",
     "audio_files": "Archivos de audio",
@@ -48,6 +64,14 @@
     "open_log": "Abrir registro",
     "tooltip_drag_drop_click": "Arrastra y suelta tu archivo aquí, o haz clic para examinar",
     "bitrate_info_title": "Información de bitrate",
-    "decoding_for_playback": "Preparando la reproducción..."
+    "decoding_for_playback": "Preparando la reproducción...",
+    "sony_tools": "Herramientas Sony",
+    "tools_import_question": "La herramienta %s no está instalada.\n\nEsta aplicación no incluye las herramientas de Sony. ¿Seleccionar tus propias copias de at9tool / at3tool para importarlas ahora?",
+    "tools_import_title": "Selecciona tus archivos Sony at9tool / at3tool",
+    "windows_programs": "Programas de Windows",
+    "tools_imported": "Importado: %s",
+    "tools_not_recognized": "No reconocidos como at9tool/at3tool (omitidos):",
+    "tools_status": "Instaladas: %s\nFaltan: %s\n\nLas herramientas de Sony solo se necesitan para codificar y para la decodificación Avanzada/Experto. ¿Importar ahora?",
+    "none": "ninguna"
   }
 }

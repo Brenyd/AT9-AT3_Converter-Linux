@@ -9,15 +9,16 @@ pkgdesc="Convert WAV/MP3 to Sony ATRAC AT9/AT3 (PS4, PSVita, PS3, PSP) and back 
 arch=('x86_64')
 url="https://github.com/Brenyd/AT9-AT3_Converter-Linux"
 license=('custom')
-depends=('python' 'pyside6' 'wine' 'ffmpeg')
-optdepends=('lame: native MP3 encoding (ffmpeg is used otherwise)'
+depends=('python' 'pyside6' 'ffmpeg')
+optdepends=('wine: run your own copies of Sony at9tool/at3tool (needed for encoding)'
+            'lame: native MP3 encoding (ffmpeg is used otherwise)'
             'pipewire-audio: playback via pw-play'
             'libpulse: playback via paplay'
             'alsa-utils: playback via aplay')
 makedepends=('git')
 provides=("$_name")
 conflicts=("$_name")
-options=('!strip')  # ships Windows .exe/.dll files run through Wine
+install=at9-at3-converter.install
 source=("$_src::git+$url.git")
 sha256sums=('SKIP')
 

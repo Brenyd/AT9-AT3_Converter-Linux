@@ -98,6 +98,9 @@ def run(argv: list[str]) -> int:
         if result.error_message:
             msg += " " + result.error_message
         print(msg, file=sys.stderr)
+        if result.error_key == "tool_missing":
+            print("Import your copy first: at9-at3-converter import-tools /path/to/your/tools",
+                  file=sys.stderr)
         if result.error_key == "conversion_log_error":
             from .core import ConversionLog
             print("Log: %s" % ConversionLog().command_log, file=sys.stderr)
@@ -105,6 +108,39 @@ def run(argv: list[str]) -> int:
     if result.ask_delete_wav and not args.keep_wav:
         delete_intermediate(result)
     print(t("finish") + " -> " + str(result.output_file))
+    return 0
+
+
+def import_tools_cmd(argv: list[str]) -> int:
+    from .core import TOOL_NAMES, import_tools, tools_dir
+    p = argparse.ArgumentParser(
+        prog="at9-at3-converter import-tools",
+        description="Import your own copies of Sony's at9tool/at3tool (files or folders). "
+                    "They are recognised by content, so their names don't matter.")
+    p.add_argument("paths", nargs="+", type=Path)
+    args = p.parse_args(argv)
+    imported, skipped = import_tools(args.paths)
+    for console, path in sorted(imported.items()):
+        print("  %-7s <- %s" % (console, path))
+    for path in skipped:
+        print("  skipped (not at9tool/at3tool): %s" % path)
+    if not imported:
+        print("No Sony tools found.", file=sys.stderr)
+        return 1
+    missing = [c for c in TOOL_NAMES if not (tools_dir() / TOOL_NAMES[c]).is_file()]
+    print("Installed in %s%s" % (tools_dir(), ("; still missing: " + ", ".join(missing)) if missing else ""))
+    return 0
+
+
+def tools_status_cmd() -> int:
+    from .core import TOOL_NAMES, Toolchain
+    tc = Toolchain()
+    for console, name in TOOL_NAMES.items():
+        path = tc.tool_path(name)
+        print("  %-7s %s" % (console, path if path.is_file() else "missing"))
+    print("  wine    %s" % (tc.wine or "missing (needed for encoding)"))
+    print("  ffmpeg  %s" % (tc.ffmpeg or "missing"))
+    print("  lame    %s" % (tc.lame or "not installed (ffmpeg is used for MP3)"))
     return 0
 
 

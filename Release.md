@@ -4,7 +4,10 @@
 
     ### Added
     - Native Linux app in `linux/` (Qt / PySide6), same UI and features as V2.7
-    - Sony at9tool/at3tool run through Wine in a private, auto-created prefix
+    - Sony at9tool/at3tool are no longer bundled: import your own copies
+      (`import-tools`, `install.sh --tools`, or "Sony tools" in the app);
+      they are recognised by content and run through Wine in a private prefix
+    - AT9/AT3 decoding and playback are native (ffmpeg), no Wine or Sony tools needed
     - ffmpeg replaces NAudio (resampling, MP3 decoding); lame/ffmpeg replace lame.exe
     - AT9/AT3 playback via PipeWire, PulseAudio, ALSA or ffplay (replaces MiniPlayer.exe)
     - Command-line mode: `at9-at3-converter convert ...`

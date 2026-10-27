@@ -38,3 +38,7 @@ linux/src/
 linux/pkg/
 linux/at9-at3-converter-src/
 *.pkg.tar.*
+
+# Sony tools are user-supplied, never committed
+at3-at9_Converter/ATRAC/*
+!at3-at9_Converter/ATRAC/README.md
