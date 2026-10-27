@@ -1,68 +1,184 @@
-# AT9-AT3_Converter
+# AT9 & AT3 Converter — Native Linux
 
-## 🐧 Linux port
+A native Linux port of **BMK AT9 & AT3 Converter 2.7** for converting audio for PS4, PSVita, PSP, and PS3.
 
-A native Linux version of BMK AT9 & AT3 Converter 2.7 lives in [`linux/`](linux). It converts WAV/MP3 → AT9 (PS4, PSVita) or ATRAC3plus AT3 (PSP, PS3), converts AT9/AT3 → WAV/MP3, supports per-console bitrates and loop settings, plays AT9/AT3 files, and includes English/French/Spanish translations.
+The Linux version now performs **ATRAC9 and ATRAC3plus encoding entirely natively**. It does not use Wine, Sony's proprietary `at9tool`/`at3tool`, Windows executables, or a Wine prefix.
 
-How it works:
+## Features
 
-- The UI is Qt (PySide6), so it fits right in on KDE Plasma and other desktops.
-- **Encoding and decoding are fully native. Wine and Sony's proprietary `at9tool`/`at3tool` are not used or required.**
-- ATRAC9 encoding uses the bundled C++ encoder derived from BlackBearReloaded's PS5 AT9 Converter and LibAtrac9 tables.
-- ATRAC3plus encoding uses the bundled, patched [`atracdenc`](https://github.com/dcherednik/atracdenc) C++ encoder.
-- FFmpeg handles decoding, resampling, and PCM conversion. MP3 encoding uses native `lame` when available, or FFmpeg otherwise. Playback uses PipeWire, PulseAudio, ALSA, or ffplay.
-- Files can be anywhere, with spaces or non-English characters in their names. They do not have to sit next to the app.
+- Convert WAV or MP3 to AT9 for PS4 and PSVita.
+- Convert WAV or MP3 to ATRAC3plus AT3 for PSP and PS3.
+- Decode AT9 and AT3 to WAV or MP3.
+- Select the supported bitrate for each target console.
+- Use whole-file, disabled, or custom loop metadata.
+- Play AT9 and AT3 files through the system audio player.
+- Use the graphical Qt interface or the command-line converter.
+- English, French, and Spanish translations.
+- Native Linux paths, including paths containing spaces or non-English characters.
 
-The native encoding path currently produces stereo ATRAC9 at 48 kHz and stereo ATRAC3plus at 44.1 kHz. Basic options and Advanced loop/PCM options are supported. Legacy Expert switches specific to Sony's tools, multichannel encoding, and Sony loop-list files are not currently supported. Output has been encode/decode tested with FFmpeg; physical-console compatibility still needs hardware testing.
+## How the native version works
 
-### Install (Arch / CachyOS)
+- **ATRAC9 encoding:** bundled native C++ encoder derived from BlackBearReloaded's PS5 AT9 Converter, with LibAtrac9 tables.
+- **ATRAC3plus encoding:** bundled native C++ [`atracdenc`](https://github.com/dcherednik/atracdenc) encoder with bitrate-aware RIFF output.
+- **Decoding and audio preparation:** FFmpeg.
+- **MP3 encoding:** native LAME when installed, otherwise FFmpeg.
+- **Playback:** PipeWire, PulseAudio, ALSA, or ffplay.
+- **Graphical interface:** PySide6/Qt.
 
-```sh
-sudo pacman -S --needed base-devel cmake libsndfile ffmpeg pyside6 lame
-git clone https://github.com/Brenyd/AT9-AT3_Converter-Linux.git
-cd AT9-AT3_Converter-Linux
-./linux/install.sh   # builds the native codecs and installs to ~/.local
+No Sony tools need to be downloaded or imported.
+
+## Supported output
+
+| Target | Codec | Sample rate | Channels | Bitrates |
+|---|---|---:|---:|---|
+| PS4 | ATRAC9 (`.at9`) | 48 kHz | Stereo | 72, 96, 120, 144, 168, 192 kbps |
+| PSVita | ATRAC9 (`.at9`) | 48 kHz | Stereo | 72, 96, 120, 144, 168, 192 kbps |
+| PSP | ATRAC3plus (`.at3`) | 44.1 kHz | Stereo | 66, 105, 132, 146, 176, 265, 352 kbps |
+| PS3 | ATRAC3plus (`.at3`) | 44.1 kHz | Stereo | 64, 96, 128, 192, 256, 320, 352 kbps |
+
+Basic options and Advanced loop/PCM options are supported. Legacy Expert switches specific to Sony's tools, multichannel encoding, and Sony loop-list files are not currently supported.
+
+The generated files have been encode/decode tested with FFmpeg. Compatibility with physical consoles still requires hardware testing.
+
+## Install on Arch Linux or CachyOS
+
+Install the build and runtime dependencies:
+
+```bash
+sudo pacman -S --needed git base-devel cmake libsndfile ffmpeg pyside6 lame
 ```
 
-Or build a package with `cd linux && makepkg -si`. The package builds and installs both native encoders automatically; no codec tools need to be imported.
+Clone the native branch and run the installer:
 
-On other distros, install Python 3, PySide6, a C++17 compiler, CMake, Make, libsndfile development files, and FFmpeg with your package manager. `lame` is optional. Then run `./linux/install.sh`. To build only the codecs, run `./linux/native/build.sh`; to run straight from the checkout afterwards, use `./linux/at9-at3-converter`. To remove an installation, run `./linux/install.sh --uninstall`.
+```bash
+git clone --branch native-codecs --single-branch https://github.com/Brenyd/AT9-AT3_Converter-Linux.git
+cd AT9-AT3_Converter-Linux
+./linux/install.sh
+```
 
-### Use
+The installer compiles both native encoders and installs the application under `~/.local`. It also adds an application-menu entry.
 
-Launch **AT9 & AT3 Converter** from your app menu. Drop a file on the window, or click the drop bar to browse. The **Native codecs** status link shows the encoder paths.
+After installation, verify that the native tools were found:
 
-There's also a command line:
+```bash
+~/.local/bin/at9-at3-converter tools
+```
 
-```sh
-at9-at3-converter convert theme.wav --console PSVita -b 144          # -> theme_144bit.at9
-at9-at3-converter convert song.mp3 --to at3 --console PSP -b 132     # -> song_132bit.at3
-at9-at3-converter convert bgm.at9 --to mp3                           # -> bgm.mp3
+Launch the application from your menu as **AT9 & AT3 Converter**, or run:
+
+```bash
+~/.local/bin/at9-at3-converter
+```
+
+If `~/.local/bin` is in your `PATH`, you can use `at9-at3-converter` without the full path.
+
+## Other Linux distributions
+
+Install these dependencies with your package manager:
+
+- Python 3
+- PySide6
+- A C++17 compiler
+- CMake and Make
+- libsndfile development files
+- FFmpeg
+- Git
+- LAME (optional; FFmpeg can encode MP3 instead)
+
+Then clone the `native-codecs` branch and run `./linux/install.sh` as shown above.
+
+To build only the native codecs without installing the application:
+
+```bash
+./linux/native/build.sh
+```
+
+After building, the application can also be run directly from the checkout:
+
+```bash
+./linux/at9-at3-converter
+```
+
+## Command-line use
+
+Convert WAV to AT9:
+
+```bash
+at9-at3-converter convert theme.wav --to at9 --console PSVita -b 144
+# Output: theme_144bit.at9
+```
+
+Convert MP3 to ATRAC3plus AT3:
+
+```bash
+at9-at3-converter convert song.mp3 --to at3 --console PSP -b 132
+# Output: song_132bit.at3
+```
+
+Convert AT9 to MP3:
+
+```bash
+at9-at3-converter convert bgm.at9 --to mp3
+# Output: bgm.mp3
+```
+
+Encode without loop metadata:
+
+```bash
+at9-at3-converter convert theme.wav --to at9 --console PS4 -b 144 --no-loop
+```
+
+Encode with custom loop points, expressed in input samples:
+
+```bash
+at9-at3-converter convert theme.wav --to at9 --console PS4 -b 144 --loop 0 48000
+```
+
+Show all command-line options:
+
+```bash
 at9-at3-converter convert --help
 ```
 
-`at9-at3-converter tools` lists the native ATRAC9/ATRAC3plus encoders, FFmpeg, and LAME.
+Show native encoder and audio-tool paths:
 
-Logs (`conversion_commands.log`, `conversion_errors.log`) are written to `~/.local/state/at9-at3-converter/`. When a conversion fails, the status bar shows an **Open log** link.
+```bash
+at9-at3-converter tools
+```
 
----
+## Logs and troubleshooting
 
-**FR:** Petit programme pour convertir vos fichiers Wav/MP3 en at9/at3 et at9/at3 en wav/MP3 rien d'extraordinaire. Il faudra .NET framework 4.5 d'installer et les fichiers à convertir
-doivent être dans le même répertoire que l'application.
-Le format At9&At3 sont utilisé par Sony sur la PSVita/TV, PSP, PS3 et la PS4 notamment pour les sons des thèmes.
-At9&At3_Converter vous permet de convertir ces fichiers sonores vers d'autres formats
+Conversion logs are stored in:
 
+```text
+~/.local/state/at9-at3-converter/
+```
 
-**EN:** Little program for convert your files Wav/MP3 To At9/At3 and At9/At3 To Wav/Mp3 nothing special you must have .NET framework 4.5 installed and the files to be converted must be in the same directory as the application.
-The At9&At3 format are used by Sony on PSVita/TV, PSP, PS3 and PS4 especially for the sounds of themes.
-At9&At3_Converter allows you to convert these sound files to other formats 
+- `conversion_commands.log` contains the commands and results.
+- `conversion_errors.log` contains conversion failures.
+
+When a conversion fails in the GUI, use the **Open log** link in the status bar. The **Native codecs** status link shows which encoder binaries the application is using.
+
+## Uninstall
+
+From the repository, run:
+
+```bash
+./linux/install.sh --uninstall
+```
+
+This removes the installed application. Logs and settings are kept.
+
+## Source notices
+
+The native codec sources and their license notices are included under [`linux/native/`](linux/native/). Sony's proprietary encoder executables are neither included nor required.
 
 [Changelog](Release.md)
 
-# Screenshots
+## Screenshots
 
-<img width="412" height="426" alt="Main" src="https://github.com/user-attachments/assets/aec42908-9056-46c0-9218-b3cf6c884906" />
+<img width="412" height="426" alt="Main window" src="https://github.com/user-attachments/assets/aec42908-9056-46c0-9218-b3cf6c884906" />
 
-<img width="412" height="426" alt="Convert" src="https://github.com/user-attachments/assets/fe8bc7bc-7470-4466-a0e6-2ab4cdaa2eaa" />
+<img width="412" height="426" alt="Conversion window" src="https://github.com/user-attachments/assets/fe8bc7bc-7470-4466-a0e6-2ab4cdaa2eaa" />
 
-<img width="622" height="602" alt="expert" src="https://github.com/user-attachments/assets/b5bc04be-a4c0-4441-bfde-182b15b8cd80" />
+<img width="622" height="602" alt="Tool options" src="https://github.com/user-attachments/assets/b5bc04be-a4c0-4441-bfde-182b15b8cd80" />
