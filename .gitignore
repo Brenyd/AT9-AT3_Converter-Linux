@@ -37,6 +37,7 @@ __pycache__/
 linux/src/
 linux/pkg/
 linux/at9-at3-converter-src/
+linux/native/build/
 *.pkg.tar.*
 
 # Sony tools are user-supplied, never committed

@@ -1,6 +1,5 @@
 post_install() {
-    echo ">>> Sony's at9tool/at3tool are not included. To encode AT9/AT3, import your own copies:"
-    echo ">>>   at9-at3-converter import-tools /path/to/your/tools"
-    echo ">>> (or click \"Sony tools\" in the app). Encoding also needs wine."
+    echo ">>> Native ATRAC9 and ATRAC3plus encoders are included."
+    echo ">>> No Wine setup or Sony tool import is required."
 }
 post_upgrade() { post_install; }

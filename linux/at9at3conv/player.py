@@ -1,8 +1,8 @@
 """AT9/AT3 playback (replaces At9Player.cs/NAudio and MiniPlayer.exe).
 
-The file is decoded to a temporary WAV (ffmpeg, or the Sony tool via Wine as
-a fallback) on a worker thread, then played with the first available system
-player: pw-play (PipeWire), paplay (PulseAudio), aplay (ALSA) or ffplay.
+The file is decoded to a temporary WAV with FFmpeg on a worker thread, then
+played with the first available system player: pw-play (PipeWire), paplay
+(PulseAudio), aplay (ALSA) or ffplay.
 """
 
 from __future__ import annotations

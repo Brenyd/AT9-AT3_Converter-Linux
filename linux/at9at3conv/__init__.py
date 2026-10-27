@@ -1,8 +1,8 @@
 """BMK AT9 & AT3 Converter - native Linux port.
 
-Sony's at3tool/at9tool are closed-source Windows binaries, so they run through
-Wine. Everything else (resampling, MP3 decode/encode, playback) is native:
-ffmpeg, lame and PipeWire/PulseAudio/ALSA.
+ATRAC9 and ATRAC3plus encoding run through bundled native C++ encoders.
+FFmpeg handles decoding and resampling; MP3 encoding uses lame or FFmpeg,
+and playback uses PipeWire/PulseAudio/ALSA. Wine is not required.
 """
 
 APP_NAME = "BMK AT9 & AT3 Converter"

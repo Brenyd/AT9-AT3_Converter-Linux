@@ -16,10 +16,10 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDia
                                QSpinBox, QStatusBar, QVBoxLayout, QWidget)
 
 from . import APP_ID, APP_NAME, VERSION
-from .core import (BITRATES, TOOL_NAMES, ConversionJob, ConversionLog, ConversionMode, ConversionResult,
+from .core import (BITRATES, ConversionJob, ConversionLog, ConversionMode, ConversionResult,
                    Converter, Toolchain, ToolLoopMode, ToolOptionLevel, ToolPcmOutputFormat,
                    ToolSettings, consoles_for, delete_intermediate, detect_input_kind,
-                   find_assets_dir, import_tools, validate_settings)
+                   find_assets_dir, validate_settings)
 from .i18n import LanguageService
 from .player import AudioPlayer
 
@@ -898,9 +898,6 @@ class MainWindow(QMainWindow):
         job = self._current_job()
         if job is None or self.worker is not None:
             return
-        if self.toolchain.needs_sony_tool(job) and not self.toolchain.has_tool(job.console):
-            if not self._offer_tool_import(job.console):
-                return
         for key in job.existing_output_warnings():
             if not self.dialogs.confirm(self.T(key)):
                 return
@@ -919,10 +916,6 @@ class MainWindow(QMainWindow):
         if not result.succeeded:
             if result.error_key == "conversion_log_error":
                 self.set_status("conversion_log_error")
-                return
-            if result.error_key == "tool_missing":
-                self.set_status("ready")
-                self._offer_tool_import(result.error_message or self.console)
                 return
             message = self.T(result.error_key) if result.error_key else ""
             if result.error_message:
@@ -958,45 +951,18 @@ class MainWindow(QMainWindow):
         style_button(self.options_button, self._frozen_state.get("options", False))
         self.setAcceptDrops(True)
 
-    # -- user-supplied Sony tools ---------------------------------------------
+    # -- native codec status --------------------------------------------------
 
     def _update_tools_link(self) -> None:
-        missing = self.toolchain.missing_tools()
-        label = self.T("sony_tools") + (" (%d/4)" % (4 - len(missing)) if missing else " ✓")
+        ready = self.toolchain.at9_encoder and self.toolchain.atracdenc
+        label = self.T("native_codecs") + (" ✓" if ready else " (!)")
         self.tools_link.setText('<a href="#tools">%s</a>' % label)
 
-    def _offer_tool_import(self, console: str) -> bool:
-        """Ask to import the missing tool; True once it is installed."""
-        if not self.dialogs.confirm(self.F("tools_import_question", console)):
-            return False
-        self._import_tools_dialog()
-        return self.toolchain.has_tool(console)
-
-    def _import_tools_dialog(self) -> None:
-        paths, _ = QFileDialog.getOpenFileNames(
-            self, self.T("tools_import_title"), str(Path.home()),
-            "%s (*.exe *.EXE *.dll *.DLL);;* (*)" % self.T("windows_programs"))
-        if not paths:
-            return
-        imported, skipped = import_tools([Path(p) for p in paths])
-        lines = []
-        if imported:
-            lines.append(self.F("tools_imported", ", ".join(sorted(imported))))
-        if skipped:
-            lines.append(self.T("tools_not_recognized"))
-            lines += ["  " + p.name for p in skipped]
-        if lines:
-            icon = QMessageBox.Icon.Information if imported else QMessageBox.Icon.Warning
-            self.dialogs.ok(self.T("sony_tools"), "\n".join(lines), icon)
-        self._update_tools_link()
-
     def _show_tools_status(self) -> None:
-        installed = [c for c in TOOL_NAMES if self.toolchain.has_tool(c)]
-        missing = [c for c in TOOL_NAMES if c not in installed]
-        text = self.F("tools_status", ", ".join(installed) or self.T("none"),
-                      ", ".join(missing) or self.T("none"))
-        if self.dialogs.confirm(text):
-            self._import_tools_dialog()
+        text = self.F("native_tools_status",
+                      self.toolchain.at9_encoder or self.T("none"),
+                      self.toolchain.atracdenc or self.T("none"))
+        self.dialogs.ok(self.T("native_codecs"), text, QMessageBox.Icon.Information)
 
     # -- playback -------------------------------------------------------------
 

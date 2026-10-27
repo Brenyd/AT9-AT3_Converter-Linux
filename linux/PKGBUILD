@@ -4,18 +4,17 @@ pkgname=at9-at3-converter-git
 _name=at9-at3-converter
 _src=at9-at3-converter-src  # differs from the launcher script in this folder
 pkgver=2.7.r0
-pkgrel=1
-pkgdesc="Convert WAV/MP3 to Sony ATRAC AT9/AT3 (PS4, PSVita, PS3, PSP) and back - Linux port of BMK AT9 & AT3 Converter"
+pkgrel=2
+pkgdesc="Native Linux ATRAC9/ATRAC3 converter for PS4, PSVita, PS3 and PSP - no Wine or Sony tools"
 arch=('x86_64')
 url="https://github.com/Brenyd/AT9-AT3_Converter-Linux"
-license=('custom')
-depends=('python' 'pyside6' 'ffmpeg')
-optdepends=('wine: run your own copies of Sony at9tool/at3tool (needed for encoding)'
-            'lame: native MP3 encoding (ffmpeg is used otherwise)'
+license=('GPL3' 'LGPL2.1' 'MIT' 'custom')
+depends=('python' 'pyside6' 'ffmpeg' 'libsndfile' 'gcc-libs')
+optdepends=('lame: native MP3 encoding (ffmpeg is used otherwise)'
             'pipewire-audio: playback via pw-play'
             'libpulse: playback via paplay'
             'alsa-utils: playback via aplay')
-makedepends=('git')
+makedepends=('git' 'cmake' 'make' 'gcc' 'libsndfile')
 provides=("$_name")
 conflicts=("$_name")
 install=at9-at3-converter.install

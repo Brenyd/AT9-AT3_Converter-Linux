@@ -1,18 +1,19 @@
 """Conversion core: no Qt imports, so it can be used by the GUI and the CLI.
 
 Mirrors ConversionModels.cs / ConversionService.cs / At9Controller.cs /
-At3Controller.cs from the Windows version. NAudio (resampling, MP3 decode) is
-replaced by ffmpeg, lame.exe by native lame, and the Sony tools run via Wine.
+At3Controller.cs from the Windows version. All codecs run natively on Linux:
+ATRAC9 uses the bundled C++ encoder, ATRAC3/3+ uses atracdenc, and FFmpeg
+handles PCM conversion, decoding, and resampling. No Wine or Sony tools.
 """
 
 from __future__ import annotations
 
 import datetime as _dt
-import hashlib
 import json
 import os
 import shlex
 import shutil
+import struct
 import subprocess
 import tempfile
 import wave
@@ -67,86 +68,6 @@ def find_assets_dir() -> Path:
         if (candidate / "Resources").is_dir():
             return candidate
     return candidates[0]
-
-
-# --------------------------------------------------------------------------
-# User-supplied Sony tools (not distributed with the app)
-# --------------------------------------------------------------------------
-
-def tools_dir() -> Path:
-    """Where imported copies of the Sony tools live."""
-    override = os.environ.get("AT9AT3_TOOLS")
-    return Path(override).expanduser() if override else data_dir() / "tools"
-
-
-# SHA-256 of the builds the Windows app was made with (for "known build" info only;
-# other builds are still accepted if they identify correctly).
-KNOWN_TOOL_HASHES = {
-    "8228fbd4ea5552a1ea80ca8304c09104423d142313d6d80ea49d63c048c8d00b": "PS4",
-    "d57d5f24b3f733864d1ac24d5a9293269b7b0a113e28944dcd848a168bb69b63": "PSVita",
-    "823199113c59ffcd3fc3e1855dbb88a9cd44d29e82e7a7cfc42e8c92f2a61341": "PSP",
-    "8ac653df80443000c8532052a7005167031b546143295aa8c2ab89f3697af3bb": "PS3",
-}
-
-
-def identify_tool(path: Path) -> Optional[str]:
-    """Which console's tool a file is, by its contents (names don't matter)."""
-    try:
-        if path.stat().st_size > 64 * 1024 * 1024:
-            return None
-        data = path.read_bytes()
-    except OSError:
-        return None
-    if not data.startswith(b"MZ"):
-        return None
-    known = KNOWN_TOOL_HASHES.get(hashlib.sha256(data).hexdigest())
-    if known:
-        return known
-    if b"ATRAC9 library" in data or b"at9tool" in data:
-        return "PS4" if b"Band Extension" in data else "PSVita"
-    if b"ATRAC3plus" in data or b"at3tool" in data:
-        return "PS3" if b"PS3at3tool" in data or b"48kHz PCM" in data else "PSP"
-    return None
-
-
-def _candidate_files(sources: list[Path]) -> list[Path]:
-    files: list[Path] = []
-    for src in sources:
-        src = Path(src).expanduser()
-        if src.is_dir():
-            files += [p for p in sorted(src.rglob("*")) if p.is_file()
-                      and p.suffix.lower() in (".exe", ".dll")]
-        elif src.is_file():
-            files.append(src)
-    return files
-
-
-def import_tools(sources: list[Path]) -> tuple[dict, list[Path]]:
-    """Copy the user's at9tool/at3tool files into tools_dir().
-
-    Returns ({console: installed_path}, [files that were not recognised]).
-    Microsoft runtime DLLs next to them (msvcr*.dll) are copied too, although
-    Wine's built-in versions work without them.
-    """
-    dest = tools_dir()
-    dest.mkdir(parents=True, exist_ok=True)
-    imported: dict = {}
-    skipped: list[Path] = []
-    for path in _candidate_files(sources):
-        if path.suffix.lower() == ".dll":
-            if path.name.lower().startswith("msvc"):
-                shutil.copyfile(path, dest / path.name.lower())
-            continue
-        console = identify_tool(path)
-        if console is None:
-            skipped.append(path)
-            continue
-        target = dest / TOOL_NAMES[console]
-        if path.resolve() != target.resolve():
-            shutil.copyfile(path, target)
-        os.chmod(target, 0o644)
-        imported[console] = target
-    return imported, skipped
 
 
 # --------------------------------------------------------------------------
@@ -262,22 +183,11 @@ class ToolSettings:
 AT9_CONSOLES = ["PS4", "PSVita"]
 AT3_CONSOLES = ["PSP", "PS3"]
 
-TOOL_NAMES = {
-    "PS4": "PS4_at9tool.exe",
-    "PSVita": "PSVita_at9tool.exe",
-    "PSP": "PSP_at3tool.exe",
-    "PS3": "PS3_at3tool.exe",
-}
-
 BITRATES = {
-    "PSP": ["32", "48", "52", "64", "66", "96", "105", "128", "132", "160",
-            "192", "256", "320", "352"],
-    "PS3": ["32", "48", "57", "64", "72", "96", "114", "128", "144", "160",
-            "192", "256", "320", "384", "512", "768"],
-    "PSVita": ["36", "48", "60", "72", "84", "96", "120", "144", "168", "192"],
-    # The Windows list repeats 384 and is slightly out of order; same values.
-    "PS4": ["36", "48", "60", "72", "84", "96", "120", "144", "168", "192",
-            "240", "288", "300", "336", "360", "384", "420", "480", "504", "672"],
+    "PSP": ["66", "105", "132", "146", "176", "265", "352"],
+    "PS3": ["64", "96", "128", "192", "256", "320", "352"],
+    "PSVita": ["72", "96", "120", "144", "168", "192"],
+    "PS4": ["72", "96", "120", "144", "168", "192"],
 }
 
 
@@ -290,71 +200,9 @@ def consoles_for(mode: ConversionMode) -> list[str]:
 
 
 def target_sample_rate(console: str) -> int:
-    return 44100 if console == "PSP" else 48000
-
-
-# --------------------------------------------------------------------------
-# Argument builder (ConversionToolArgumentBuilder)
-# --------------------------------------------------------------------------
-
-def build_encode_options(s: Optional[ToolSettings], is_at9: bool, is_ps4: bool,
-                         loop_list_arg: Optional[str] = None) -> list[str]:
-    if s is None or s.level == ToolOptionLevel.BASIC:
-        return ["-wholeloop"]
-
-    args: list[str] = []
-    if s.loop_mode == ToolLoopMode.NO_LOOP:
-        pass
-    elif s.loop_mode == ToolLoopMode.CUSTOM_LOOP:
-        args += ["-loop", str(s.loop_start), str(s.loop_end)]
-    elif s.loop_mode == ToolLoopMode.DEFAULT_WHOLE_LOOP:
-        args.append("-defaultWL" if is_ps4 else "-wholeloop")
-    else:
-        args.append("-wholeloop")
-
-    if s.level != ToolOptionLevel.EXPERT:
-        return args
-
-    if is_at9 and s.use_sampling_rate:
-        args += ["-fs", str(s.sampling_rate)]
-    if is_at9 and s.use_loop_list and s.loop_list_path.strip():
-        args += ["-looplist", loop_list_arg or s.loop_list_path]
-    if is_at9 and s.superframe_mode == 1:
-        args.append("-supframeon")
-    elif is_at9 and s.superframe_mode == 2:
-        args.append("-supframeoff")
-    if is_at9 and s.dual_mode:
-        args.append("-dual")
-    if is_at9 and s.use_quantized_bands:
-        args += ["-nbands", str(s.quantized_bands)]
-    if is_at9 and s.use_intensity_band:
-        args += ["-isband", str(s.intensity_band)]
-    if is_at9 and s.use_gradient_mode:
-        args += ["-gradmode", str(s.gradient_mode)]
-    if is_ps4 and s.wide_band:
-        args.append("-wband")
-    if is_ps4 and s.band_extension:
-        args.append("-bex")
-    if is_ps4 and s.lfe_super_low_cut:
-        args.append("-slc")
-    if s.custom_encode_args.strip():
-        args += shlex.split(s.custom_encode_args)
-    return args
-
-
-def build_decode_options(s: Optional[ToolSettings], is_ps4: bool) -> list[str]:
-    if s is None or s.level == ToolOptionLevel.BASIC:
-        return ["-repeat", "1"]
-
-    args = ["-repeat", str(max(1, s.decode_repeat))]
-    if s.level == ToolOptionLevel.EXPERT and is_ps4 and s.wave_extensible_header:
-        args.append("-wext")
-    if is_ps4:  # Advanced or Expert
-        args.append({ToolPcmOutputFormat.INT24: "-int24",
-                     ToolPcmOutputFormat.FLOAT: "-float"}.get(s.pcm_output_format, "-int16"))
-    if s.level == ToolOptionLevel.EXPERT and s.custom_decode_args.strip():
-        args += shlex.split(s.custom_decode_args)
-    return args
+    # The native ATRAC3/3+ backend currently supports 44.1 kHz PCM. ATRAC9
+    # operates at 48 kHz. Both are accepted by the target consoles.
+    return 44100 if console in AT3_CONSOLES else 48000
 
 
 def validate_settings(s: ToolSettings, console: str, mode: ConversionMode) -> str:
@@ -401,7 +249,7 @@ class ConversionJob:
 
     @property
     def tool_name(self) -> str:
-        return TOOL_NAMES.get(self.console, "")
+        return "atrac9-encoder" if self.mode.is_at9 else "atracdenc"
 
     @property
     def is_ps4(self) -> bool:
@@ -542,93 +390,43 @@ class ConversionLog:
 # External programs
 # --------------------------------------------------------------------------
 
-def find_wine() -> Optional[str]:
-    override = os.environ.get("AT9AT3_WINE")
+def _native_binary(name: str) -> Optional[str]:
+    """Find a bundled encoder, a development build, or a system installation."""
+    override = os.environ.get("AT9AT3_" + name.upper().replace("-", "_"))
     if override:
-        return shutil.which(override) or (override if os.path.isfile(override) else None)
-    return shutil.which("wine") or shutil.which("wine64")
-
-
-def to_windows_path(path: Path) -> str:
-    """Wine maps the Unix root to drive Z:."""
-    return "Z:" + str(Path(path).resolve()).replace("/", "\\")
+        found = shutil.which(override) or (override if os.path.isfile(override) else None)
+        if found:
+            return found
+    pkg = Path(__file__).resolve().parent
+    candidates = [
+        pkg.parent / "bin" / name,
+        pkg.parent / "native" / "build" / name,
+        pkg.parent / "native" / "build" / "atracdenc" / "src" / name,
+    ]
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return shutil.which(name)
 
 
 class Toolchain:
-    """Locates and runs wine, the Sony tools, ffmpeg and lame."""
+    """Locates and runs the native ATRAC encoders, FFmpeg, and LAME."""
 
     def __init__(self, assets: Optional[Path] = None, log: Optional[ConversionLog] = None):
         self.assets = assets or find_assets_dir()
         self.log = log or ConversionLog()
-        self.wine = find_wine()
+        self.at9_encoder = _native_binary("atrac9-encoder")
+        self.atracdenc = _native_binary("atracdenc")
         self.ffmpeg = shutil.which("ffmpeg")
         self.ffprobe = shutil.which("ffprobe")
         self.lame = shutil.which("lame")
-        prefix = os.environ.get("AT9AT3_WINEPREFIX")
-        self.wine_prefix = Path(prefix).expanduser() if prefix else data_dir() / "wineprefix"
 
-    # -- wine --------------------------------------------------------------
-
-    def tool_path(self, tool_name: str) -> Path:
-        """Imported copy first; a Windows-style ATRAC/ folder still works too."""
-        for folder in (tools_dir(), self.assets / "ATRAC"):
-            candidate = folder / tool_name
-            if candidate.is_file():
-                return candidate
-        return tools_dir() / tool_name
-
-    def has_tool(self, console: str) -> bool:
-        return console in TOOL_NAMES and self.tool_path(TOOL_NAMES[console]).is_file()
-
-    def missing_tools(self) -> list[str]:
-        return [c for c in TOOL_NAMES if not self.has_tool(c)]
-
-    def needs_sony_tool(self, job: "ConversionJob") -> bool:
-        """Encoding always does; decoding only for Advanced/Expert options
-        (Basic decodes natively with ffmpeg)."""
-        if job.mode.is_encode:
-            return True
-        return job.settings.level != ToolOptionLevel.BASIC or not self.ffmpeg
-
-    def wine_env(self) -> dict:
-        env = dict(os.environ)
-        env["WINEPREFIX"] = str(self.wine_prefix)
-        env["WINEDEBUG"] = "-all"
-        # No Mono/Gecko install prompts, no desktop menu entries.
-        env["WINEDLLOVERRIDES"] = "mscoree=;mshtml=;winemenubuilder.exe="
-        return env
-
-    def wine_prefix_ready(self) -> bool:
-        return (self.wine_prefix / "system.reg").is_file()
-
-    def ensure_wine(self, status: Optional[StatusCallback] = None) -> None:
-        if not self.wine:
-            raise ConversionError("wine_missing")
-        if self.wine_prefix_ready():
-            return
-        if status:
-            status("wine_preparing")
-        self.wine_prefix.mkdir(parents=True, exist_ok=True)
-        try:
-            subprocess.run([self.wine, "wineboot", "--init"], env=self.wine_env(),
-                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL, timeout=600, check=False)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise ConversionError("wine_missing", str(exc))
-
-    def run_sony_tool(self, tool_name: str, args: list[str], workdir: Path,
-                      ctx: Optional[LogContext]) -> bool:
-        exe = self.tool_path(tool_name)
-        if not exe.is_file():
-            console = next((c for c, n in TOOL_NAMES.items() if n == tool_name), tool_name)
-            raise ConversionError("tool_missing", console)
-        if not self.wine:
-            raise ConversionError("wine_missing")
-        cmd = [self.wine, to_windows_path(exe)] + args
-        return self._run("ATRAC/" + tool_name, cmd, args, ctx, cwd=workdir,
-                         env=self.wine_env())
-
-    # -- native ------------------------------------------------------------
+    def run_native(self, codec: str, args: list[str], ctx: Optional[LogContext]) -> bool:
+        exe = self.at9_encoder if codec == "at9" else self.atracdenc
+        if not exe:
+            raise ConversionError("native_encoder_missing", codec.upper())
+        name = "atrac9-encoder" if codec == "at9" else "atracdenc"
+        return self._run(name, [exe] + args, args, ctx)
 
     def run_ffmpeg(self, args: list[str], ctx: Optional[LogContext]) -> bool:
         if not self.ffmpeg:
@@ -646,23 +444,26 @@ class Toolchain:
         raise ConversionError("mp3_encoder_missing")
 
     def probe_audio(self, path: Path) -> dict:
-        """{'codec': str, 'rate': int, 'channels': int} for the first audio stream."""
+        """Codec, sample rate, channel count, and duration for the first audio stream."""
         if self.ffprobe:
             try:
                 out = subprocess.run(
                     [self.ffprobe, "-v", "error", "-select_streams", "a:0",
-                     "-show_entries", "stream=codec_name,sample_rate,channels",
+                     "-show_entries", "stream=codec_name,sample_rate,channels:format=duration",
                      "-of", "json", str(path)],
                     capture_output=True, text=True, timeout=60, check=True).stdout
-                stream = json.loads(out)["streams"][0]
+                probed = json.loads(out)
+                stream = probed["streams"][0]
                 return {"codec": stream.get("codec_name", ""),
                         "rate": int(stream.get("sample_rate", 0)),
-                        "channels": int(stream.get("channels", 0))}
+                        "channels": int(stream.get("channels", 0)),
+                        "duration": float(probed.get("format", {}).get("duration", 0) or 0)}
             except (OSError, subprocess.SubprocessError, ValueError, KeyError, IndexError):
                 pass
-        with wave.open(str(path), "rb") as wf:  # plain PCM only
+        with wave.open(str(path), "rb") as wf:
             codec = {2: "pcm_s16le", 3: "pcm_s24le"}.get(wf.getsampwidth(), "pcm")
-            return {"codec": codec, "rate": wf.getframerate(), "channels": wf.getnchannels()}
+            return {"codec": codec, "rate": wf.getframerate(), "channels": wf.getnchannels(),
+                    "duration": wf.getnframes() / wf.getframerate()}
 
     def _run(self, tool: str, cmd: list[str], logged_args: list[str],
              ctx: Optional[LogContext], cwd: Optional[Path] = None,
@@ -695,14 +496,44 @@ def _nonempty(path: Path) -> bool:
     return path.is_file() and path.stat().st_size > 0
 
 
+def _add_riff_loop(path: Path, settings: ToolSettings, rate: int, samples: int) -> None:
+    """Insert a standard one-loop smpl chunk into an ATRAC3 RIFF file."""
+    if settings.loop_mode == ToolLoopMode.CUSTOM_LOOP:
+        start, end = settings.loop_start, settings.loop_end
+        if start < 0 or end <= start or end > samples:
+            raise ConversionError("invalid_options", "loop must satisfy 0 <= start < end <= input samples")
+        end -= 1  # The UI uses end-exclusive input; smpl stores inclusive positions.
+    else:
+        if samples <= 0:
+            raise ConversionError("invalid_options", "cannot loop empty audio")
+        start, end = 0, samples - 1
+    period = round(1_000_000_000 / rate)
+    payload = struct.pack("<9I6I", 0, 0, period, 60, 0, 0, 0, 1, 24,
+                          0, 0, start, end, 0, 0)
+    chunk = b"smpl" + struct.pack("<I", len(payload)) + payload
+    data = bytearray(path.read_bytes())
+    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        raise ConversionError("conversion_log_error", "native encoder wrote invalid RIFF")
+    pos = 12
+    while pos + 8 <= len(data):
+        size = struct.unpack_from("<I", data, pos + 4)[0]
+        if data[pos:pos + 4] == b"data":
+            break
+        pos += 8 + size + (size & 1)
+    else:
+        raise ConversionError("conversion_log_error", "ATRAC3 data chunk missing")
+    data[pos:pos] = chunk
+    struct.pack_into("<I", data, 4, len(data) - 8)
+    path.write_bytes(data)
+
+
 class Converter:
     def __init__(self, toolchain: Optional[Toolchain] = None):
         self.tools = toolchain or Toolchain()
 
     def convert(self, job: ConversionJob, status: StatusCallback = lambda key: None) -> ConversionResult:
         cache_dir().mkdir(parents=True, exist_ok=True)
-        # The Sony tools are old ANSI programs: they only ever see short ASCII
-        # names inside a private work dir, so spaces/unicode in paths are fine.
+        # Native tools see short ASCII names inside a private work directory.
         work = Path(tempfile.mkdtemp(prefix="job-", dir=str(cache_dir())))
         try:
             if job.mode.is_encode:
@@ -731,48 +562,73 @@ class Converter:
     def _encode(self, job: ConversionJob, work: Path, status: StatusCallback) -> ConversionResult:
         if not job.bitrate:
             raise ConversionError("invalid_options", "no bitrate selected")
-        if not self.tools.has_tool(job.console):
-            raise ConversionError("tool_missing", job.console)
-        self.tools.ensure_wine(status)
+        if job.bitrate not in BITRATES[job.console]:
+            raise ConversionError("invalid_options", "unsupported native bitrate")
+        s = job.settings
+        if s.level == ToolOptionLevel.EXPERT:
+            unsupported = (
+                s.use_sampling_rate or s.use_loop_list or s.superframe_mode != 0 or
+                s.dual_mode or s.use_quantized_bands or s.use_intensity_band or
+                s.use_gradient_mode or s.wide_band or s.band_extension or
+                s.lfe_super_low_cut or bool(s.custom_encode_args.strip())
+            )
+            if unsupported:
+                raise ConversionError("native_options_unsupported")
 
         rate = target_sample_rate(job.console)
-        force_stereo = job.console == "PSP"
         staged_wav = work / "input.wav"
         codec_label = "AT9" if job.mode.is_at9 else "AT3"
         source_label = "MP3" if job.mode.from_mp3 else "WAV"
 
+        # Both native encoders currently accept mono-downmixed/stereo PCM. Use
+        # stereo for consistent console-compatible output and 16-bit input for
+        # atracdenc; the ATRAC9 raw conversion below promotes it to float64.
         if job.mode.from_mp3:
             status("wav_progress")
             wav = job.intermediate_wav
-            self._to_pcm(job.input_file, wav, rate, force_stereo,
+            self._to_pcm(job.input_file, wav, rate, True,
                          self._ctx(job, "MP3 -> WAV", job.input_file, wav, []))
             shutil.copyfile(wav, staged_wav)
         else:
             info = self.tools.probe_audio(job.input_file)
-            allowed = ("pcm_s16le",) if job.mode.is_at3 else ("pcm_s16le", "pcm_s24le")
-            if (info["rate"] != rate or info["codec"] not in allowed
-                    or (force_stereo and info["channels"] != 2)):
+            if info["rate"] != rate or info["codec"] != "pcm_s16le" or info["channels"] != 2:
                 status("normalizing_psp" if job.console == "PSP" else "resampling_wav")
-                self._to_pcm(job.input_file, staged_wav, rate, force_stereo,
+                self._to_pcm(job.input_file, staged_wav, rate, True,
                              self._ctx(job, "WAV normalize", job.input_file, staged_wav, []))
             else:
                 shutil.copyfile(job.input_file, staged_wav)
 
-        loop_list_arg = None
-        s = job.settings
-        if s.level == ToolOptionLevel.EXPERT and s.use_loop_list and s.loop_list_path.strip():
-            staged_list = work / "looplist.txt"
-            shutil.copyfile(Path(s.loop_list_path).expanduser(), staged_list)
-            loop_list_arg = to_windows_path(staged_list)
-
         status("at9_progress" if job.mode.is_at9 else "at3_progress")
         staged_out = work / ("output" + job.mode.codec_ext)
-        options = build_encode_options(s, job.mode.is_at9, job.is_ps4, loop_list_arg)
-        args = ["-e", "-br", job.bitrate] + options + [to_windows_path(staged_wav),
-                                                       to_windows_path(staged_out)]
-        ctx = self._ctx(job, "%s -> %s" % (source_label, codec_label),
-                        job.input_file, job.final_file, options)
-        if not self.tools.run_sony_tool(job.tool_name, args, work, ctx) or not _nonempty(staged_out):
+        options: list[str]
+        if job.mode.is_at9:
+            raw = work / "input.f64le"
+            raw_ctx = self._ctx(job, "WAV -> float64 PCM", staged_wav, raw, [])
+            if not self.tools.run_ffmpeg(["-i", str(staged_wav), "-map", "0:a:0",
+                                          "-c:a", "pcm_f64le", "-f", "f64le", str(raw)], raw_ctx):
+                raise ConversionError("wav_preprocess_error", "FFmpeg failed, see conversion log")
+            options = [job.bitrate]
+            if s.loop_mode == ToolLoopMode.NO_LOOP:
+                options.append("--no-loop")
+            elif s.loop_mode == ToolLoopMode.CUSTOM_LOOP:
+                options += ["--loop", str(s.loop_start), str(s.loop_end)]
+            else:
+                options.append("--whole-loop")
+            args = [str(raw), str(staged_out)] + options
+            ok = self.tools.run_native("at9", args, self._ctx(
+                job, "%s -> AT9 (native)" % source_label, job.input_file, job.final_file, options))
+        else:
+            # Sony's PSP and PS3 at3tool modes both produce ATRAC3plus. Plain
+            # ATRAC3 only supports the lower PSP rates and is a different codec.
+            options = ["-e", "atrac3plus", "--bitrate", job.bitrate,
+                       "--container", "riff", "--nostdout"]
+            args = options + ["-i", str(staged_wav), "-o", str(staged_out)]
+            ok = self.tools.run_native("at3", args, self._ctx(
+                job, "%s -> AT3 (native)" % source_label, job.input_file, job.final_file, options))
+            if ok and s.loop_mode != ToolLoopMode.NO_LOOP:
+                with wave.open(str(staged_wav), "rb") as wf:
+                    _add_riff_loop(staged_out, s, wf.getframerate(), wf.getnframes())
+        if not ok or not _nonempty(staged_out):
             raise ConversionError("conversion_log_error")
         _replace_file(staged_out, job.final_file)
         return ConversionResult(True, ask_delete_wav=job.mode.from_mp3, ask_play=True,
@@ -796,29 +652,37 @@ class Converter:
         staged_in = work / ("input" + job.mode.codec_ext)
         staged_out = work / "output.wav"
         shutil.copyfile(job.input_file, staged_in)
-        options = build_decode_options(job.settings, job.is_ps4)
+        s = job.settings
+        if s.level == ToolOptionLevel.EXPERT and (s.custom_decode_args.strip() or
+                                                  s.wave_extensible_header):
+            raise ConversionError("native_options_unsupported")
+        pcm = {ToolPcmOutputFormat.INT16: "pcm_s16le",
+               ToolPcmOutputFormat.INT24: "pcm_s24le",
+               ToolPcmOutputFormat.FLOAT: "pcm_f32le"}[s.pcm_output_format]
+        options = ["native", pcm]
+        args: list[str] = []
+        if s.decode_repeat > 1:
+            args += ["-stream_loop", str(s.decode_repeat - 1)]
+            options += ["repeat=" + str(s.decode_repeat)]
+        # FFmpeg's WAV demuxer may group several ATRAC3plus frames per packet.
+        # Rebuild PCM timestamps after decoding so repeated packet PTS values
+        # do not produce non-monotonic output timestamps.
+        args += ["-i", str(staged_in)]
+        duration = self.tools.probe_audio(staged_in).get("duration", 0)
+        if duration > 0:
+            # Compressed frames pad the tail; the container's exact sample count
+            # lets us trim that padding, including after explicit stream repeats.
+            args += ["-t", "%.9f" % (duration * s.decode_repeat)]
+        args += ["-map", "0:a:0", "-af", "asetpts=N/SR/TB",
+                 "-c:a", pcm, str(staged_out)]
         conversion = "%s -> %s" % (codec_label, "MP3 decode" if job.mode.to_mp3 else "WAV")
         ctx = self._ctx(job, conversion, job.input_file, wav, options)
-
-        if not self.tools.needs_sony_tool(job):
-            # Native: ffmpeg decodes ATRAC3/3plus/9 itself. It plays the file
-            # once, which is what the app's Basic default (-repeat 1) does.
-            ctx.options = "ffmpeg (native)"
-            ok = self.tools.run_ffmpeg(["-i", str(staged_in), "-c:a", "pcm_s16le",
-                                        str(staged_out)], ctx)
-        else:
-            if not self.tools.has_tool(job.console):
-                raise ConversionError("tool_missing", job.console)
-            self.tools.ensure_wine(status)
-            args = ["-d"] + options + [to_windows_path(staged_in), to_windows_path(staged_out)]
-            ok = self.tools.run_sony_tool(job.tool_name, args, work, ctx)
-        if not ok or not _nonempty(staged_out):
+        if not self.tools.run_ffmpeg(args, ctx) or not _nonempty(staged_out):
             raise ConversionError("conversion_log_error")
         _replace_file(staged_out, wav)
 
         if not job.mode.to_mp3:
             return ConversionResult(True, output_file=wav)
-
         mp3_ctx = self._ctx(job, codec_label + " -> MP3 encode", wav, job.final_file, ["-V2"])
         if not self.tools.encode_mp3(wav, job.final_file, mp3_ctx) or not _nonempty(job.final_file):
             raise ConversionError("conversion_log_error")
@@ -836,7 +700,7 @@ def delete_intermediate(result: ConversionResult) -> None:
 # --------------------------------------------------------------------------
 
 def decode_for_playback(path: Path, tools: Toolchain, workdir: Path) -> Path:
-    """ffmpeg first (fast, no Wine); falls back to the Sony tool via Wine."""
+    """Decode AT9/AT3 to a temporary WAV using native FFmpeg codecs."""
     out = workdir / "playback.wav"
     if out.exists():
         out.unlink()
@@ -846,14 +710,4 @@ def decode_for_playback(path: Path, tools: Toolchain, workdir: Path) -> Path:
                               capture_output=True, timeout=600)
         if proc.returncode == 0 and _nonempty(out):
             return out
-    kind = detect_input_kind(path)
-    if tools.wine and kind in ("at9", "at3"):
-        tools.ensure_wine()
-        staged = workdir / ("play." + kind)
-        shutil.copyfile(path, staged)
-        consoles = ["PS4", "PSVita"] if kind == "at9" else ["PS3", "PSP"]
-        for name in [TOOL_NAMES[c] for c in consoles if tools.has_tool(c)]:
-            args = ["-d", "-repeat", "1", to_windows_path(staged), to_windows_path(out)]
-            if tools.run_sony_tool(name, args, workdir, None) and _nonempty(out):
-                return out
     raise ConversionError("playback_error", str(path))
