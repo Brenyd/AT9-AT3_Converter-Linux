@@ -496,35 +496,177 @@ def _nonempty(path: Path) -> bool:
     return path.is_file() and path.stat().st_size > 0
 
 
-def _add_riff_loop(path: Path, settings: ToolSettings, rate: int, samples: int) -> None:
-    """Insert a standard one-loop smpl chunk into an ATRAC3 RIFF file."""
+# atracdenc's ATRAC3plus output decodes AT3P_TOTAL_DELAY samples late (two
+# 2048-sample frames of encoder delay plus the decoder's implicit 184). Sony's
+# tools record this in a 12-byte "fact" chunk -- [sample count, base skip,
+# base skip + 184] -- and decoders (official ones and vgmstream) skip
+# field 3 + 184 samples. Loop points in "smpl" are absolute, i.e. they include
+# field 3. Measured identically at every supported bitrate.
+AT3P_FRAME = 2048
+AT3P_BASE_SKIP = 2 * AT3P_FRAME          # 4096
+AT3P_IMPLICIT_SKIP = 184
+AT3P_FACT_SKIP = AT3P_BASE_SKIP + AT3P_IMPLICIT_SKIP   # 4280, written to fact[2]
+AT3P_TOTAL_DELAY = AT3P_FACT_SKIP + AT3P_IMPLICIT_SKIP  # 4464
+
+
+def _pad_wav_tail(path: Path, extra_frames: int) -> int:
+    """Append silence so the encoder emits enough frames to cover its own
+    delay (otherwise the last ~60 ms of audio is lost). Returns the original
+    sample count."""
+    with wave.open(str(path), "rb") as wf:
+        params = wf.getparams()
+        frames = wf.readframes(wf.getnframes())
+    silence = b"\0" * (extra_frames * params.nchannels * params.sampwidth)
+    with wave.open(str(path), "wb") as wf:
+        wf.setparams(params)
+        wf.writeframes(frames + silence)
+    return params.nframes
+
+
+def _riff_chunks(data: bytes) -> list[tuple[bytes, bytes]]:
+    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        raise ConversionError("conversion_log_error", "native encoder wrote invalid RIFF")
+    chunks, pos = [], 12
+    while pos + 8 <= len(data):
+        cid = data[pos:pos + 4]
+        size = struct.unpack_from("<I", data, pos + 4)[0]
+        body = data[pos + 8:pos + 8 + size]
+        if len(body) != size:
+            raise ConversionError("conversion_log_error", "truncated RIFF chunk")
+        chunks.append((cid, body))
+        pos += 8 + size + (size & 1)
+    return chunks
+
+
+def _write_riff(path: Path, chunks: list[tuple[bytes, bytes]]) -> None:
+    out = bytearray(b"RIFF\0\0\0\0WAVE")
+    for cid, body in chunks:
+        out += cid + struct.pack("<I", len(body)) + body
+        if len(body) & 1:
+            out += b"\0"
+    struct.pack_into("<I", out, 4, len(out) - 8)
+    path.write_bytes(out)
+
+
+def _finalize_at3(path: Path, settings: ToolSettings, rate: int, samples: int) -> None:
+    """Give an atracdenc ATRAC3plus RIFF Sony's delay/loop metadata."""
+    loop = None
     if settings.loop_mode == ToolLoopMode.CUSTOM_LOOP:
         start, end = settings.loop_start, settings.loop_end
         if start < 0 or end <= start or end > samples:
             raise ConversionError("invalid_options", "loop must satisfy 0 <= start < end <= input samples")
-        end -= 1  # The UI uses end-exclusive input; smpl stores inclusive positions.
-    else:
+        loop = (start, end - 1)  # UI end is exclusive; smpl stores inclusive positions
+    elif settings.loop_mode != ToolLoopMode.NO_LOOP:
         if samples <= 0:
             raise ConversionError("invalid_options", "cannot loop empty audio")
-        start, end = 0, samples - 1
-    period = round(1_000_000_000 / rate)
-    payload = struct.pack("<9I6I", 0, 0, period, 60, 0, 0, 0, 1, 24,
-                          0, 0, start, end, 0, 0)
-    chunk = b"smpl" + struct.pack("<I", len(payload)) + payload
-    data = bytearray(path.read_bytes())
-    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
-        raise ConversionError("conversion_log_error", "native encoder wrote invalid RIFF")
-    pos = 12
-    while pos + 8 <= len(data):
-        size = struct.unpack_from("<I", data, pos + 4)[0]
-        if data[pos:pos + 4] == b"data":
-            break
-        pos += 8 + size + (size & 1)
-    else:
+        loop = (0, samples - 1)
+
+    fact = (b"fact", struct.pack("<3I", samples, AT3P_BASE_SKIP, AT3P_FACT_SKIP))
+    chunks = [c for c in _riff_chunks(path.read_bytes()) if c[0] not in (b"fact", b"smpl")]
+    data_index = next((i for i, c in enumerate(chunks) if c[0] == b"data"), None)
+    if data_index is None:
         raise ConversionError("conversion_log_error", "ATRAC3 data chunk missing")
-    data[pos:pos] = chunk
-    struct.pack_into("<I", data, 4, len(data) - 8)
-    path.write_bytes(data)
+    extra = [fact]
+    if loop is not None:
+        period = round(1_000_000_000 / rate)
+        extra.append((b"smpl", struct.pack("<9I6I", 0, 0, period, 60, 0, 0, 0, 1, 24,
+                                            0, 0, loop[0] + AT3P_FACT_SKIP,
+                                            loop[1] + AT3P_FACT_SKIP, 0, 0)))
+    _write_riff(path, chunks[:data_index] + extra + chunks[data_index:])
+
+
+_GUID_AT3P = bytes.fromhex("bfaa23e958cb7144a119fffa01e4ce62")
+_GUID_AT9 = bytes.fromhex("d242e147ba368d4d88fc61654f8c836c")
+
+
+@dataclass
+class StreamTiming:
+    """Where the real audio sits inside a decoder's raw output."""
+    skip: int = 0                  # leading samples to drop
+    samples: int = 0               # real length (0 = unknown, keep everything)
+    loop: Optional[tuple] = None   # (start, end_exclusive) in output samples
+    invert: bool = False           # FFmpeg's polarity is flipped vs Sony's decoder
+
+    def filters(self) -> str:
+        chain = "atrim=start_sample=%d" % self.skip
+        if self.samples:
+            chain += ":end_sample=%d" % (self.skip + self.samples)
+        if self.invert:
+            chain += ",volume=-1"
+        return chain + ",asetpts=N/SR/TB"
+
+
+def read_stream_timing(path: Path) -> StreamTiming:
+    """Encoder delay, length and loop of an AT3/AT3plus/AT9 RIFF, using the
+    same rules as vgmstream (sample-accurate against Sony's tools) for an
+    FFmpeg decode. Unknown layouts fall back to no trimming."""
+    try:
+        chunks = dict((cid, body) for cid, body in _riff_chunks(path.read_bytes()))
+    except (OSError, ConversionError):
+        return StreamTiming()
+    fmt = chunks.get(b"fmt ", b"")
+    tag = struct.unpack_from("<H", fmt)[0] if len(fmt) >= 2 else 0
+    guid = fmt[24:40] if len(fmt) >= 40 else b""
+    kind = ("at3" if tag == 0x0270 else
+            "at3p" if tag == 0xFFFE and guid == _GUID_AT3P else
+            "at9" if tag == 0xFFFE and guid == _GUID_AT9 else "")
+    if not kind:
+        return StreamTiming()
+
+    fact = chunks.get(b"fact", b"")
+    words = struct.unpack("<%dI" % (len(fact) // 4), fact[:len(fact) // 4 * 4])
+    samples = words[0] if words else 0
+    field = words[2] if len(words) >= 3 else words[1] if len(words) == 2 else None
+    if kind == "at9":
+        skip = field if field is not None else 256
+    elif kind == "at3p":
+        implicit = 184 * 2 if len(words) == 2 else 184
+        skip = (field if field is not None else 2048) + implicit
+    else:
+        skip = (field if field is not None else 1024) + 69
+
+    loop = None
+    smpl = chunks.get(b"smpl", b"")
+    if len(smpl) >= 60 and struct.unpack_from("<I", smpl, 28)[0] >= 1:
+        start, end = struct.unpack_from("<II", smpl, 44)
+        offset = field or 0
+        start, end = start - offset, end - offset + 1
+        if 0 <= start < end:
+            loop = (start, end)
+    # vgmstream flips FFmpeg's ATRAC3 to match Sony's tools; FFmpeg's ATRAC9
+    # output is likewise inverted relative to LibAtrac9. ATRAC3plus matches.
+    return StreamTiming(skip=skip, samples=samples, loop=loop, invert=kind in ("at3", "at9"))
+
+
+_RAW_FORMATS = {"pcm_s16le": ("s16le", 2), "pcm_s24le": ("s24le", 3), "pcm_f32le": ("f32le", 4)}
+
+
+def decode_exact(tools: "Toolchain", src: Path, dst: Path, pcm: str, repeat: int = 1,
+                 ctx: Optional[LogContext] = None) -> bool:
+    """Decode to WAV with the encoder delay removed and the exact length kept.
+    repeat > 1 plays the loop region (or the whole file) that many times, like
+    Sony's -repeat option."""
+    timing = read_stream_timing(src)
+    base = ["-i", str(src), "-map", "0:a:0", "-af", timing.filters()]
+    if repeat <= 1:
+        return tools.run_ffmpeg(base + ["-c:a", pcm, str(dst)], ctx)
+
+    raw_fmt, width = _RAW_FORMATS[pcm]
+    info = tools.probe_audio(src)
+    raw = dst.with_suffix(".raw")
+    if not tools.run_ffmpeg(base + ["-f", raw_fmt, "-c:a", pcm, str(raw)], ctx):
+        return False
+    data = raw.read_bytes()
+    frame = width * max(1, info["channels"])
+    total = len(data) // frame
+    start, end = timing.loop if timing.loop and timing.loop[1] <= total else (0, total)
+    a, b = start * frame, end * frame
+    data = data[:b] + data[a:b] * (repeat - 1) + data[b:]
+    raw.write_bytes(data)
+    ok = tools.run_ffmpeg(["-f", raw_fmt, "-ar", str(info["rate"]), "-ac", str(info["channels"]),
+                           "-i", str(raw), "-c:a", pcm, str(dst)], ctx)
+    raw.unlink(missing_ok=True)
+    return ok
 
 
 class Converter:
@@ -622,12 +764,13 @@ class Converter:
             # ATRAC3 only supports the lower PSP rates and is a different codec.
             options = ["-e", "atrac3plus", "--bitrate", job.bitrate,
                        "--container", "riff", "--nostdout"]
+            # Pad by the full delay plus one frame so the tail isn't cut off.
+            samples = _pad_wav_tail(staged_wav, AT3P_TOTAL_DELAY + AT3P_FRAME)
             args = options + ["-i", str(staged_wav), "-o", str(staged_out)]
             ok = self.tools.run_native("at3", args, self._ctx(
                 job, "%s -> AT3 (native)" % source_label, job.input_file, job.final_file, options))
-            if ok and s.loop_mode != ToolLoopMode.NO_LOOP:
-                with wave.open(str(staged_wav), "rb") as wf:
-                    _add_riff_loop(staged_out, s, wf.getframerate(), wf.getnframes())
+            if ok and _nonempty(staged_out):
+                _finalize_at3(staged_out, s, rate, samples)
         if not ok or not _nonempty(staged_out):
             raise ConversionError("conversion_log_error")
         _replace_file(staged_out, job.final_file)
@@ -660,24 +803,14 @@ class Converter:
                ToolPcmOutputFormat.INT24: "pcm_s24le",
                ToolPcmOutputFormat.FLOAT: "pcm_f32le"}[s.pcm_output_format]
         options = ["native", pcm]
-        args: list[str] = []
         if s.decode_repeat > 1:
-            args += ["-stream_loop", str(s.decode_repeat - 1)]
             options += ["repeat=" + str(s.decode_repeat)]
-        # FFmpeg's WAV demuxer may group several ATRAC3plus frames per packet.
-        # Rebuild PCM timestamps after decoding so repeated packet PTS values
-        # do not produce non-monotonic output timestamps.
-        args += ["-i", str(staged_in)]
-        duration = self.tools.probe_audio(staged_in).get("duration", 0)
-        if duration > 0:
-            # Compressed frames pad the tail; the container's exact sample count
-            # lets us trim that padding, including after explicit stream repeats.
-            args += ["-t", "%.9f" % (duration * s.decode_repeat)]
-        args += ["-map", "0:a:0", "-af", "asetpts=N/SR/TB",
-                 "-c:a", pcm, str(staged_out)]
         conversion = "%s -> %s" % (codec_label, "MP3 decode" if job.mode.to_mp3 else "WAV")
         ctx = self._ctx(job, conversion, job.input_file, wav, options)
-        if not self.tools.run_ffmpeg(args, ctx) or not _nonempty(staged_out):
+        # The encoder delay recorded in the file is skipped and the exact
+        # sample count kept, so output lines up with the original audio.
+        if not decode_exact(self.tools, staged_in, staged_out, pcm,
+                            max(1, s.decode_repeat), ctx) or not _nonempty(staged_out):
             raise ConversionError("conversion_log_error")
         _replace_file(staged_out, wav)
 
@@ -705,8 +838,10 @@ def decode_for_playback(path: Path, tools: Toolchain, workdir: Path) -> Path:
     if out.exists():
         out.unlink()
     if tools.ffmpeg:
+        timing = read_stream_timing(path)
         proc = subprocess.run([tools.ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error",
-                               "-y", "-i", str(path), "-c:a", "pcm_s16le", str(out)],
+                               "-y", "-i", str(path), "-map", "0:a:0",
+                               "-af", timing.filters(), "-c:a", "pcm_s16le", str(out)],
                               capture_output=True, timeout=600)
         if proc.returncode == 0 and _nonempty(out):
             return out
